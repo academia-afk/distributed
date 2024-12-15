@@ -1,5 +1,5 @@
 import os
-import zipfile
+import tarfile
 import requests
 import torch
 import torch.nn as nn
@@ -59,8 +59,8 @@ def prepare_stanford_dogs_dataset(root_dir="./data/stanford_dogs"):
 
         # Extract tar files
         print(f"Extracting {filename}...")
-        with zipfile.ZipFile(filepath, "r") as tar:
-            tar.extractall(root_dir)
+        with tarfile.open(filepath, "r") as tar:
+            tar.extractall(path=root_dir)
 
     # Process annotations to create split files
     process_annotations(root_dir)
