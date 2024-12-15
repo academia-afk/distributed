@@ -1,102 +1,59 @@
+import ray
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.data.distributed import DistributedSampler
-from ray.tune.schedulers import ASHAScheduler
-from ray.air.integrations.wandb import WandbLoggerCallback
-from ray import tune
 import wandb
 
-# Dummy Dataset
-class DummyDataset(Dataset):
-    def __init__(self, size=1000):
-        self.data = torch.rand(size, 10)
-        self.labels = (self.data.sum(dim=1) > 5).float()
+# Initialize Weights & Biases
+wandb.init(project="ray-pytorch-distributed", entity="your_entity")
 
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx], self.labels[idx]
-
-# Simple Neural Network
-class SimpleNet(nn.Module):
+# Define a simple neural network model
+class SimpleModel(nn.Module):
     def __init__(self):
-        super(SimpleNet, self).__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(10, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()
-        )
+        super(SimpleModel, self).__init__()
+        self.fc = nn.Linear(10, 1)
 
     def forward(self, x):
         return self.fc(x)
 
-# Training Function
-def train_model(config):
-    wandb.init(project="ray-wandb-test", group="distributed-training", config=config)
+# Training function to be executed on each worker
+def train_func():
+    # Initialize the model
+    model = SimpleModel()
+    optimizer = optim.SGD(model.parameters(), lr=0.01)
+    criterion = nn.MSELoss()
 
-    dataset = DummyDataset()
-    sampler = DistributedSampler(dataset)
-    dataloader = DataLoader(dataset, sampler=sampler, batch_size=int(config["batch_size"]))
+    # Dummy data for training
+    for epoch in range(5):  # Number of epochs
+        inputs = torch.randn(32, 10)  # Batch size of 32, input size of 10
+        targets = torch.randn(32, 1)   # Corresponding targets
 
-    model = SimpleNet()
-    criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=config["lr"])
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+        # Forward pass
+        outputs = model(inputs)
+        loss = criterion(outputs, targets)
 
-    scaler = torch.cuda.amp.GradScaler()
+        # Backward pass and optimization
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-    for epoch in range(config["epochs"]):
-        running_loss = 0.0
-        for inputs, labels in dataloader:
-            optimizer.zero_grad()
-            with torch.cuda.amp.autocast():
-                outputs = model(inputs).squeeze()
-                loss = criterion(outputs, labels)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+        # Log metrics to W&B
+        wandb.log({"epoch": epoch, "loss": loss.item()})
 
-            running_loss += loss.item()
+# Main execution block to set up Ray and run training
+if __name__ == "__main__":
+    ray.init(address='auto')  # Connect to the existing Ray cluster
 
-        avg_loss = running_loss / len(dataloader)
-        scheduler.step()
+    # Define the number of workers (2 for two nodes)
+    num_workers = 2
 
-        tune.report(loss=avg_loss)
-        wandb.log({"loss": avg_loss, "epoch": epoch})
+    # Launch distributed training on multiple workers
+    futures = [ray.remote(train_func).remote() for _ in range(num_workers)]
 
-    wandb.finish()
+    # Wait for all workers to finish training
+    results = ray.get(futures)
 
-# Define Search Space
-config = {
-    "lr": tune.loguniform(1e-4, 1e-2),
-    "batch_size": tune.choice([16, 32, 64]),
-    "epochs": 30,
-}
+    print("Training completed on all workers!")
 
-# Scheduler for Ray Tune
-scheduler = ASHAScheduler(
-    metric="loss",
-    mode="min",
-    max_t=10,
-    grace_period=1,
-    reduction_factor=2
-)
-
-# Run Ray Tune Experiment
-tune.run(
-    train_model,
-    config=config,
-    num_samples=10,
-    resources_per_trial={"cpu": 2, "gpu": 1},
-    scheduler=scheduler,
-    callbacks=[
-        WandbLoggerCallback(
-            project="ray-wandb-test",
-            log_config=True
-        )
-    ]
-)
+    # Shutdown Ray after training is complete
+    ray.shutdown()
