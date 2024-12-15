@@ -5,7 +5,7 @@ import torch.optim as optim
 import wandb
 
 # Initialize Weights & Biases
-wandb.init(project="ray-pytorch-distributed", entity="your_entity")
+wandb.init(project="ray-wandb-test", group="distributed-training")
 
 # Define a simple neural network model
 class SimpleModel(nn.Module):
