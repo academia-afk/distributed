@@ -16,7 +16,7 @@ class SimpleModel(nn.Module):
 # Training function to be executed on each worker
 def train_func():
     # Initialize Weights & Biases inside the worker function
-    wandb.init(project="ray-pytorch-distributed", entity="your_entity", reinit=True)
+    wandb.init(project="ray-wandb-test", group="distributed-training")
 
     # Initialize the model
     model = SimpleModel()
