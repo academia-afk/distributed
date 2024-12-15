@@ -67,14 +67,33 @@ def prepare_stanford_dogs_dataset(root_dir="./data/stanford_dogs"):
 
 
 def process_annotations(root_dir):
-    """
-    Convert Stanford Dogs annotations into train/test split text files.
-    Each line in the annotation files will be:
-    `relative_image_path,label`
-    """
-    # Placeholder: This will depend on the directory structure after extraction
-    pass  # TODO: Implement parsing logic here
+annotations_dir = os.path.join(root_dir, "Annotation")
+    images_dir = os.path.join(root_dir, "Images")
+    train_output_file = os.path.join(root_dir, "train_annotations.txt")
+    test_output_file = os.path.join(root_dir, "test_annotations.txt")
 
+    # Create train and test annotation files
+    with open(train_output_file, "w") as train_file, open(test_output_file, "w") as test_file:
+        # Iterate through all class folders in the Annotation directory
+        for class_id, class_dir in enumerate(sorted(glob.glob(os.path.join(annotations_dir, "*")))):
+            class_name = os.path.basename(class_dir)
+
+            # Parse all XML files in this class's annotation folder
+            for xml_file in glob.glob(os.path.join(class_dir, "*.xml")):
+                tree = ET.parse(xml_file)
+                root = tree.getroot()
+
+                # Get image filename
+                image_filename = root.find("filename").text
+                image_relative_path = os.path.join("Images", class_name, image_filename)
+
+                # Split into train and test (80/20 split for simplicity)
+                if "test" in image_filename.lower():
+                    test_file.write(f"{image_relative_path},{class_id}\n")
+                else:
+                    train_file.write(f"{image_relative_path},{class_id}\n")
+
+    print("Annotation files processed successfully.")
 
 # Training function for each node
 @ray.remote(num_gpus=1)
