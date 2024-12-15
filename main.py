@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset, DistributedSampler
 from PIL import Image
 import wandb
 import ray
+import glob
 
 
 # Define a custom dataset for Stanford Dogs
