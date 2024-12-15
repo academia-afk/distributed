@@ -1,3 +1,4 @@
+import os
 import ray
 import torch
 import torch.nn as nn
@@ -5,15 +6,8 @@ import torch.optim as optim
 import wandb
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split
-
-# Pre-download dataset
-def download_dataset():
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-    ])
-    datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
-    datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
 
 # Define the CNN model
 class CNNModel(nn.Module):
@@ -37,40 +31,48 @@ class CNNModel(nn.Module):
     def forward(self, x):
         return self.fc_layers(self.conv_layers(x))
 
-# Load CIFAR-10 data
-def get_dataloader():
+# Distributed training function
+def train_func(rank, world_size, epochs=50):
+    # Initialize distributed process group
+    dist.init_process_group(backend="nccl", init_method="env://", world_size=world_size, rank=rank)
+
+    # Set device for each process
+    device = torch.device(f"cuda:{rank}")
+
+    # Initialize W&B
+    wandb.init(
+        project="ray-wandb-test",
+        group="distributed-training",
+        name=f"worker_{rank}",
+        config={"lr": 0.001, "epochs": epochs},
+    )
+
+    # Load data
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
-    dataset = datasets.CIFAR10(root="./data", train=True, download=False, transform=transform)
-    test_dataset = datasets.CIFAR10(root="./data", train=False, download=False, transform=transform)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+    dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+    test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
+    # Split dataset for distributed training
+    train_sampler = torch.utils.data.distributed.DistributedSampler(dataset, num_replicas=world_size, rank=rank)
+    train_loader = DataLoader(dataset, batch_size=64, sampler=train_sampler)
     test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
-    return train_loader, val_loader, test_loader
 
-# Training function for a single worker
-def train_func(worker_id):
-    wandb.init(
-        project="ray-wandb-test",
-        group="distributed-training",
-        name=f"worker_{worker_id}",
-        config={"worker_id": worker_id, "lr": 0.001, "epochs": 50},
-    )
-    train_loader, val_loader, test_loader = get_dataloader()
-    model = CNNModel()
+    # Initialize model, optimizer, and loss function
+    model = CNNModel().to(device)
+    model = DDP(model, device_ids=[rank])
     optimizer = optim.Adam(model.parameters(), lr=wandb.config["lr"])
     criterion = nn.CrossEntropyLoss()
 
-    for epoch in range(wandb.config["epochs"]):
+    # Training loop
+    for epoch in range(epochs):
         model.train()
+        train_sampler.set_epoch(epoch)
         train_loss = 0.0
         for inputs, labels in train_loader:
+            inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, labels)
@@ -78,32 +80,39 @@ def train_func(worker_id):
             optimizer.step()
             train_loss += loss.item()
 
-        # Validation
-        val_loss = 0.0
+        # Evaluate model
+        model.eval()
         correct = 0
         total = 0
-        model.eval()
         with torch.no_grad():
-            for inputs, labels in val_loader:
+            for inputs, labels in test_loader:
+                inputs, labels = inputs.to(device), labels.to(device)
                 outputs = model(inputs)
-                loss = criterion(outputs, labels)
-                val_loss += loss.item()
                 _, predicted = outputs.max(1)
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
         accuracy = 100.0 * correct / total
-        wandb.log({"epoch": epoch, "train_loss": train_loss / len(train_loader),
-                   "val_loss": val_loss / len(val_loader), "accuracy": accuracy})
+        wandb.log({"epoch": epoch, "train_loss": train_loss / len(train_loader), "accuracy": accuracy})
 
     wandb.finish()
-    return f"Worker {worker_id} completed training!"
+    dist.destroy_process_group()
+    return f"Worker {rank} completed training!"
 
 if __name__ == "__main__":
-    download_dataset()  # Pre-download dataset
+    # Set environment variables for distributed training
+    os.environ["MASTER_ADDR"] = "172.17.0.2"  # Head node IP
+    os.environ["MASTER_PORT"] = "12355"       # Arbitrary port for communication
+
     ray.init(address="auto")
-    num_workers = 4
-    futures = [ray.remote(lambda id=i: train_func(id)).remote() for i in range(num_workers)]
-    results = ray.get(futures)
-    print("Training completed on all workers!")
+
+    # Number of workers and GPUs
+    world_size = 2
+
+    # Launch distributed training
+    ray.get([
+        ray.remote(train_func).remote(rank, world_size) for rank in range(world_size)
+    ])
+
+    print("Distributed training completed!")
     ray.shutdown()
