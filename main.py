@@ -1,3 +1,59 @@
+import ray
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import wandb
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, random_split
+
+# Pre-download dataset
+def download_dataset():
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+    datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+
+# Define the CNN model
+class CNNModel(nn.Module):
+    def __init__(self):
+        super(CNNModel, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+        self.fc_layers = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 256),
+            nn.ReLU(),
+            nn.Linear(256, 10),
+        )
+
+    def forward(self, x):
+        return self.fc_layers(self.conv_layers(x))
+
+# Load CIFAR-10 data
+def get_dataloader():
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    dataset = datasets.CIFAR10(root="./data", train=True, download=False, transform=transform)
+    test_dataset = datasets.CIFAR10(root="./data", train=False, download=False, transform=transform)
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    return train_loader, val_loader, test_loader
+
 # Training function for a single worker
 def train_func(worker_id):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # Add device check
@@ -45,3 +101,17 @@ def train_func(worker_id):
 
     wandb.finish()
     return f"Worker {worker_id} completed training!"
+
+if __name__ == "__main__":
+    download_dataset()  # Pre-download dataset
+    ray.init(address="auto")
+    num_workers = 4
+    futures = [ray.remote(lambda id=i: train_func(id)).remote() for i in range(num_workers)]
+    results = ray.get(futures)
+    print("Training completed on all workers!")
+    ray.shutdown()
+
+
+
+# Training function for a single worker
+
