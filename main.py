@@ -186,8 +186,8 @@ if __name__ == "__main__":
     ray.init(address="auto")
 
     config = {
-        "train_dir": "datasets/openimages_coco/train",
-        "val_dir":   "datasets/openimages_coco/val",
+        "train_dir": "/workspace/datasets/openimages_coco/train",
+        "val_dir":   "/workspace/datasets/openimages_coco/val",
         "num_classes": 4,
         "num_nodes": 2,
         "batch_size": 16,
