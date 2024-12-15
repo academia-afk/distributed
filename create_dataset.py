@@ -2,9 +2,9 @@ import fiftyone as fo
 import fiftyone.zoo as foz
 import os
 
-classes = ["Cat"]
-max_samples_train = 80
-max_samples_val = 20
+classes = ["Cat", "Dog", "Person"]
+max_samples_train = 400
+max_samples_val = 100
 
 export_dir = "datasets/openimages_coco"
 
