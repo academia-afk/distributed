@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
-import wandb
-from ray import tune
-from ray.air.integrations.wandb import WandbLoggerCallback
+from torch.utils.data.distributed import DistributedSampler
 from ray.tune.schedulers import ASHAScheduler
+from ray.tune.logger.integration import WandbLoggerCallback
+from ray import tune
+import wandb
 
 # Dummy Dataset
 class DummyDataset(Dataset):
@@ -35,31 +36,35 @@ class SimpleNet(nn.Module):
 
 # Training Function
 def train_model(config):
-    # Initialize wandb for this run
-    wandb.init(project="ray-wandb-test", config=config)
+    wandb.init(project="ray-wandb-test", group="distributed-training", config=config)
 
-    # Prepare dataset
     dataset = DummyDataset()
-    dataloader = DataLoader(dataset, batch_size=int(config["batch_size"]))
+    sampler = DistributedSampler(dataset)
+    dataloader = DataLoader(dataset, sampler=sampler, batch_size=int(config["batch_size"]))
 
-    # Define model, loss, and optimizer
     model = SimpleNet()
     criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=config["lr"])
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
+
+    scaler = torch.cuda.amp.GradScaler()
 
     for epoch in range(config["epochs"]):
         running_loss = 0.0
         for inputs, labels in dataloader:
             optimizer.zero_grad()
-            outputs = model(inputs).squeeze()
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                outputs = model(inputs).squeeze()
+                loss = criterion(outputs, labels)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             running_loss += loss.item()
 
-        # Log metrics to wandb and ray
         avg_loss = running_loss / len(dataloader)
+        scheduler.step()
+
         tune.report(loss=avg_loss)
         wandb.log({"loss": avg_loss, "epoch": epoch})
 
@@ -69,7 +74,7 @@ def train_model(config):
 config = {
     "lr": tune.loguniform(1e-4, 1e-2),
     "batch_size": tune.choice([16, 32, 64]),
-    "epochs": 10,
+    "epochs": 30,
 }
 
 # Scheduler for Ray Tune
@@ -85,7 +90,8 @@ scheduler = ASHAScheduler(
 tune.run(
     train_model,
     config=config,
-    resources_per_trial={"cpu": 1, "gpu": 0},  # Adjust based on available resources
+    num_samples=10,
+    resources_per_trial={"cpu": 2, "gpu": 1},
     scheduler=scheduler,
     callbacks=[
         WandbLoggerCallback(
