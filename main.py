@@ -2,6 +2,8 @@ import os
 import json
 import torch
 import wandb
+import random
+import numpy as np 
 
 import torchvision
 import torchvision.transforms as T
@@ -96,6 +98,7 @@ def train_loop_per_worker(node_id, config):
         config=config
     )
 
+    set_seed(config["seed"])
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
@@ -180,6 +183,15 @@ def train_loop_per_worker(node_id, config):
     wandb.finish()
     return f"Node {node_id} finished training."
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False  # Disable the non-deterministic algorithms
+    print(f"Random seed set to {seed}")
+
 
 if __name__ == "__main__":
     ray.init(address="auto")
@@ -192,6 +204,7 @@ if __name__ == "__main__":
         "batch_size": 16,
         "num_epochs": 10,
         "lr": 0.005,
+        "seed": 42,
     }
 
     futures = [train_loop_per_worker.remote(node_id, config) for node_id in range(config["num_nodes"])]
