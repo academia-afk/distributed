@@ -4,7 +4,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from ray.tune.schedulers import ASHAScheduler
-from ray.tune.logger.integration import WandbLoggerCallback
+from ray.tune.integration.wandb import WandbLoggerCallback
 from ray import tune
 import wandb
 
