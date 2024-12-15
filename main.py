@@ -3,85 +3,103 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
-from sklearn.datasets import make_classification
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader, random_split
 
-# Generate synthetic dataset
-def generate_data():
-    X, y = make_classification(
-        n_samples=5000, n_features=10, n_informative=8, n_classes=2, random_state=42
-    )
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    return (
-        torch.tensor(X_train, dtype=torch.float32),
-        torch.tensor(y_train, dtype=torch.float32),
-        torch.tensor(X_test, dtype=torch.float32),
-        torch.tensor(y_test, dtype=torch.float32),
-    )
-
-# Define a more realistic model
-class SimpleNet(nn.Module):
+# Define the CNN model
+class CNNModel(nn.Module):
     def __init__(self):
-        super(SimpleNet, self).__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(10, 128),
+        super(CNNModel, self).__init__()
+        self.conv_layers = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Linear(128, 64),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid()  # Binary classification
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+        self.fc_layers = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 256),
+            nn.ReLU(),
+            nn.Linear(256, 10),
         )
 
     def forward(self, x):
-        return self.fc(x)
+        x = self.conv_layers(x)
+        x = self.fc_layers(x)
+        return x
+
+# Load the CIFAR-10 dataset
+def get_dataloader():
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+    test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+
+    train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=64, shuffle=False)
+    test_loader = DataLoader(test_dataset, batch_size=64, shuffle=False)
+    return train_loader, val_loader, test_loader
 
 # Training function for a single worker
 def train_func(worker_id):
-    # Initialize W&B
     wandb.init(
         project="ray-wandb-test",
         group="distributed-training",
         name=f"worker_{worker_id}",
-        config={"worker_id": worker_id, "lr": 0.001}
+        config={"worker_id": worker_id, "lr": 0.001, "epochs": 50},
     )
 
-    # Generate data
-    X_train, y_train, X_test, y_test = generate_data()
+    # Load data
+    train_loader, val_loader, test_loader = get_dataloader()
 
-    # Define the model, optimizer, and loss function
-    model = SimpleNet()
+    # Initialize model, optimizer, and loss function
+    model = CNNModel()
     optimizer = optim.Adam(model.parameters(), lr=wandb.config["lr"])
-    criterion = nn.BCELoss()
+    criterion = nn.CrossEntropyLoss()
 
     # Training loop
-    for epoch in range(50):
+    for epoch in range(wandb.config["epochs"]):
         model.train()
-        optimizer.zero_grad()
+        train_loss = 0.0
+        for inputs, labels in train_loader:
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            train_loss += loss.item()
 
-        # Forward pass
-        outputs = model(X_train).squeeze()
-        loss = criterion(outputs, y_train)
-
-        # Backward pass and optimization
-        loss.backward()
-        optimizer.step()
-
-        # Evaluate accuracy on test set
+        # Validation loop
         model.eval()
+        val_loss = 0.0
+        correct = 0
+        total = 0
         with torch.no_grad():
-            predictions = (model(X_test).squeeze() > 0.5).float()
-            accuracy = accuracy_score(y_test.numpy(), predictions.numpy())
+            for inputs, labels in val_loader:
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                val_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
 
-        # Log metrics to W&B
-        wandb.log({"epoch": epoch, "loss": loss.item(), "accuracy": accuracy})
+        accuracy = 100.0 * correct / total
+        wandb.log({"epoch": epoch, "train_loss": train_loss / len(train_loader),
+                   "val_loss": val_loss / len(val_loader), "accuracy": accuracy})
 
     wandb.finish()
     return f"Worker {worker_id} completed training!"
 
 if __name__ == "__main__":
     # Initialize Ray
-    ray.init(address="auto", log_to_driver=True)
+    ray.init(address="auto")
 
     # Number of workers
     num_workers = 4
