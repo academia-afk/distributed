@@ -27,7 +27,7 @@ def train_func(config):
 # Create a Trainer
 trainer = TorchTrainer(
     train_loop_per_worker=train_func,
-    scaling_config=ScalingConfig(num_workers=4, use_gpu=True),
+    scaling_config=ScalingConfig(num_workers=2, use_gpu=True),
     train_loop_config={"lr": 0.01},
 )
 
