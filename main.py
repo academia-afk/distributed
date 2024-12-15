@@ -191,7 +191,7 @@ if __name__ == "__main__":
         "num_classes": 4,
         "num_nodes": 2,
         "batch_size": 16,
-        "num_epochs": 10,
+        "num_epochs": 100,
         "lr": 0.005,
         "seed": 42,
     }
