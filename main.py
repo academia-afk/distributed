@@ -67,7 +67,7 @@ def prepare_stanford_dogs_dataset(root_dir="./data/stanford_dogs"):
 
 
 def process_annotations(root_dir):
-annotations_dir = os.path.join(root_dir, "Annotation")
+    annotations_dir = os.path.join(root_dir, "Annotation")
     images_dir = os.path.join(root_dir, "Images")
     train_output_file = os.path.join(root_dir, "train_annotations.txt")
     test_output_file = os.path.join(root_dir, "test_annotations.txt")
