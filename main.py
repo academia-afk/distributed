@@ -6,6 +6,15 @@ import wandb
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, random_split
 
+# Pre-download dataset
+def download_dataset():
+    transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
+    datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+
 # Define the CNN model
 class CNNModel(nn.Module):
     def __init__(self):
@@ -26,18 +35,16 @@ class CNNModel(nn.Module):
         )
 
     def forward(self, x):
-        x = self.conv_layers(x)
-        x = self.fc_layers(x)
-        return x
+        return self.fc_layers(self.conv_layers(x))
 
-# Load the CIFAR-10 dataset
+# Load CIFAR-10 data
 def get_dataloader():
     transform = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
-    dataset = datasets.CIFAR10(root="./data", train=True, download=True, transform=transform)
-    test_dataset = datasets.CIFAR10(root="./data", train=False, download=True, transform=transform)
+    dataset = datasets.CIFAR10(root="./data", train=True, download=False, transform=transform)
+    test_dataset = datasets.CIFAR10(root="./data", train=False, download=False, transform=transform)
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
@@ -55,16 +62,11 @@ def train_func(worker_id):
         name=f"worker_{worker_id}",
         config={"worker_id": worker_id, "lr": 0.001, "epochs": 50},
     )
-
-    # Load data
     train_loader, val_loader, test_loader = get_dataloader()
-
-    # Initialize model, optimizer, and loss function
     model = CNNModel()
     optimizer = optim.Adam(model.parameters(), lr=wandb.config["lr"])
     criterion = nn.CrossEntropyLoss()
 
-    # Training loop
     for epoch in range(wandb.config["epochs"]):
         model.train()
         train_loss = 0.0
@@ -76,11 +78,11 @@ def train_func(worker_id):
             optimizer.step()
             train_loss += loss.item()
 
-        # Validation loop
-        model.eval()
+        # Validation
         val_loss = 0.0
         correct = 0
         total = 0
+        model.eval()
         with torch.no_grad():
             for inputs, labels in val_loader:
                 outputs = model(inputs)
@@ -98,15 +100,10 @@ def train_func(worker_id):
     return f"Worker {worker_id} completed training!"
 
 if __name__ == "__main__":
-    # Initialize Ray
+    download_dataset()  # Pre-download dataset
     ray.init(address="auto")
-
-    # Number of workers
     num_workers = 4
-
-    # Launch distributed training tasks
     futures = [ray.remote(lambda id=i: train_func(id)).remote() for i in range(num_workers)]
     results = ray.get(futures)
-
     print("Training completed on all workers!")
     ray.shutdown()
