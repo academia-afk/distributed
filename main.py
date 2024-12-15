@@ -16,11 +16,6 @@ from ray.train import ScalingConfig
 from ray.train.torch import TorchTrainer
 from torchvision.datasets import CocoDetection
 
-
-######################
-# Dataset + Utilities
-######################
-
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
         img, anns = super().__getitem__(idx)
@@ -55,13 +50,8 @@ def collate_fn(batch):
 
 
 def evaluate_coco(model, data_loader, device, dataset_dir):
-    """
-    Runs COCO evaluation (mAP, AP50, etc.) on the entire validation set.
-    Returns (ap, ap50) as floats.
-    """
     model.eval()
-    coco_gt = data_loader.dataset.coco  # ground truth annotations
-
+    coco_gt = data_loader.dataset.coco
     results = []
     with torch.no_grad():
         for images, targets in data_loader:
@@ -93,14 +83,9 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
     coco_eval.accumulate()
     coco_eval.summarize()
 
-    ap = coco_eval.stats[0]   # mAP @ IoU=0.5:0.95
-    ap50 = coco_eval.stats[1] # mAP @ IoU=0.5
+    ap = coco_eval.stats[0]
+    ap50 = coco_eval.stats[1]
     return ap, ap50
-
-
-######################
-# Distributed Training
-######################
 
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
@@ -112,8 +97,6 @@ def train_loop_per_worker(node_id, config):
     )
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    # Paths to your COCO dataset (exported by FiftyOne)
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
 
@@ -199,14 +182,14 @@ def train_loop_per_worker(node_id, config):
 
 
 if __name__ == "__main__":
-    ray.init(address="auto")  # Connect to your Ray cluster or run locally
+    ray.init(address="auto")
 
     config = {
         "train_dir": "datasets/openimages_coco/train",
         "val_dir":   "datasets/openimages_coco/val",
-        "num_classes": 2,    # Cat + background
+        "num_classes": 4,
         "num_nodes": 2,
-        "batch_size": 4,
+        "batch_size": 16,
         "num_epochs": 10,
         "lr": 0.005,
     }
@@ -215,17 +198,3 @@ if __name__ == "__main__":
     results = ray.get(futures)
     print(results)
     ray.shutdown()
-    
-    # trainer = TorchTrainer(
-    #    train_loop_per_worker=train_loop_per_worker,
-    #    train_loop_config=config,
-    #    scaling_config=ScalingConfig(
-    #        num_workers=2,    # how many distributed workers
-    #        use_gpu=True      # 1 GPU per worker
-    #    ),
-    #)
-
-    #result = trainer.fit()
-    #print("Final training result:", result.metrics)
-
-    #ray.shutdown()
