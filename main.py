@@ -4,9 +4,6 @@ import torch.nn as nn
 import torch.optim as optim
 import wandb
 
-# Initialize Weights & Biases
-
-
 # Define a simple neural network model
 class SimpleModel(nn.Module):
     def __init__(self):
@@ -18,6 +15,9 @@ class SimpleModel(nn.Module):
 
 # Training function to be executed on each worker
 def train_func():
+    # Initialize Weights & Biases inside the worker function
+    wandb.init(project="ray-pytorch-distributed", entity="your_entity", reinit=True)
+
     # Initialize the model
     model = SimpleModel()
     optimizer = optim.SGD(model.parameters(), lr=0.01)
@@ -42,7 +42,6 @@ def train_func():
 
 # Main execution block to set up Ray and run training
 if __name__ == "__main__":
-    wandb.init(project="ray-wandb-test", group="distributed-training")
     ray.init(address='auto')  # Connect to the existing Ray cluster
 
     # Define the number of workers (2 for two nodes)
