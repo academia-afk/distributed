@@ -1,28 +1,93 @@
 import os
+import zipfile
+import requests
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import datasets, transforms, models
-from torch.utils.data import DataLoader, DistributedSampler
+from torchvision import transforms, models
+from torch.utils.data import DataLoader, Dataset, DistributedSampler
+from PIL import Image
 import wandb
 import ray
 
 
-# Define the training function for each node
-@ray.remote(num_gpus=1)  # Reserve 1 GPU per node
+# Define a custom dataset for Stanford Dogs
+class StanfordDogsDataset(Dataset):
+    def __init__(self, root_dir, split, transform=None):
+        self.root_dir = root_dir
+        self.split = split
+        self.transform = transform
+        self.data = []
+
+        # Load annotations
+        annotation_file = os.path.join(root_dir, f"{split}_annotations.txt")
+        with open(annotation_file, "r") as f:
+            for line in f:
+                image_path, label = line.strip().split(",")
+                self.data.append((image_path, int(label)))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        image_path, label = self.data[idx]
+        image = Image.open(os.path.join(self.root_dir, image_path)).convert("RGB")
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+
+# Function to download and prepare the Stanford Dogs dataset
+def prepare_stanford_dogs_dataset(root_dir="./data/stanford_dogs"):
+    if not os.path.exists(root_dir):
+        os.makedirs(root_dir)
+
+    dataset_url = "http://vision.stanford.edu/aditya86/ImageNetDogs/images.tar"
+    annotations_url = "http://vision.stanford.edu/aditya86/ImageNetDogs/annotation.tar"
+
+    # Download dataset
+    for url in [dataset_url, annotations_url]:
+        filename = url.split("/")[-1]
+        filepath = os.path.join(root_dir, filename)
+        if not os.path.exists(filepath):
+            print(f"Downloading {filename}...")
+            response = requests.get(url, stream=True)
+            with open(filepath, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            print(f"{filename} downloaded.")
+
+        # Extract tar files
+        print(f"Extracting {filename}...")
+        with zipfile.ZipFile(filepath, "r") as tar:
+            tar.extractall(root_dir)
+
+    # Process annotations to create split files
+    process_annotations(root_dir)
+
+
+def process_annotations(root_dir):
+    """
+    Convert Stanford Dogs annotations into train/test split text files.
+    Each line in the annotation files will be:
+    `relative_image_path,label`
+    """
+    # Placeholder: This will depend on the directory structure after extraction
+    pass  # TODO: Implement parsing logic here
+
+
+# Training function for each node
+@ray.remote(num_gpus=1)
 def train_on_node(node_id, config):
-    # Initialize wandb for logging
     wandb.init(
         project="ray-wandb-dogs",
         group="distributed-nodes",
         name=f"node_{node_id}",
         config=config,
     )
-    
-    # Set the device
+
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    # Data transformations for the Stanford Dogs dataset
     transform = {
         "train": transforms.Compose([
             transforms.Resize((224, 224)),
@@ -37,34 +102,27 @@ def train_on_node(node_id, config):
         ]),
     }
 
-    # Load Stanford Dogs dataset
-    train_dataset = datasets.StanfordDogs(
-        root="./data", split="train", download=True, transform=transform["train"]
+    train_dataset = StanfordDogsDataset(
+        root_dir="./data/stanford_dogs", split="train", transform=transform["train"]
     )
-    val_dataset = datasets.StanfordDogs(
-        root="./data", split="test", download=True, transform=transform["val"]
+    val_dataset = StanfordDogsDataset(
+        root_dir="./data/stanford_dogs", split="test", transform=transform["val"]
     )
 
-    # Use DistributedSampler for training
     train_sampler = DistributedSampler(train_dataset, num_replicas=config["num_nodes"], rank=node_id)
     train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], sampler=train_sampler)
     val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False)
 
-    # Load the ResNet50 model (pretrained on ImageNet)
     model = models.resnet50(pretrained=True)
-    model.fc = nn.Linear(model.fc.in_features, 120)  # Modify for 120 dog breeds
+    model.fc = nn.Linear(model.fc.in_features, 120)
     model = model.to(device)
 
-    # Define optimizer and loss function
     optimizer = optim.Adam(model.parameters(), lr=config["lr"])
     criterion = nn.CrossEntropyLoss()
 
-    # Training loop
     for epoch in range(config["num_epochs"]):
         model.train()
         train_loss = 0.0
-
-        # Training step
         for inputs, labels in train_loader:
             inputs, labels = inputs.to(device), labels.to(device)
             optimizer.zero_grad()
@@ -74,7 +132,6 @@ def train_on_node(node_id, config):
             optimizer.step()
             train_loss += loss.item()
 
-        # Validation step
         model.eval()
         val_loss = 0.0
         correct = 0
@@ -89,10 +146,7 @@ def train_on_node(node_id, config):
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
 
-        # Calculate accuracy
         accuracy = 100.0 * correct / total
-
-        # Log metrics to wandb
         wandb.log({
             "epoch": epoch,
             "train_loss": train_loss / len(train_loader),
@@ -105,21 +159,21 @@ def train_on_node(node_id, config):
 
 
 if __name__ == "__main__":
-    # Initialize Ray
     ray.init(address="auto")
 
-    # Configuration for training
+    # Prepare dataset
+    prepare_stanford_dogs_dataset()
+
+    # Training config
     config = {
         "lr": 0.001,
         "batch_size": 32,
         "num_epochs": 10,
-        "num_nodes": 2,  # Adjust based on your cluster size
+        "num_nodes": 2,
     }
 
-    # Launch training on each node
     futures = [train_on_node.remote(node_id, config) for node_id in range(config["num_nodes"])]
-    results = ray.get(futures)  # Wait for all nodes to finish
+    results = ray.get(futures)
     print(results)
 
-    # Shutdown Ray
     ray.shutdown()
