@@ -1,91 +1,13 @@
-import os
-import torch
-import wandb
-import ray
-from ray import train
-from ray.train import ScalingConfig
-from ray.train.torch import TorchTrainer
-import torchvision
-import torchvision.transforms as T
-from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
-from torch.utils.data import DataLoader, DistributedSampler
-from torchvision.datasets import CocoDetection
-
-# Define the dataset class
-class CocoDataset(CocoDetection):
-    def __getitem__(self, idx):
-        img, anns = super().__getitem__(idx)
-        img = T.ToTensor()(img)
-
-        coco_img_id = self.ids[idx]  # Real COCO image ID
-
-        boxes = []
-        labels = []
-        for ann in anns:
-            x, y, w, h = ann["bbox"]
-            boxes.append([x, y, x + w, y + h])
-            labels.append(ann["category_id"])
-
-        if len(boxes) == 0:
-            boxes = torch.zeros((0, 4), dtype=torch.float32)
-            labels = torch.zeros((0,), dtype=torch.int64)
-        else:
-            boxes = torch.as_tensor(boxes, dtype=torch.float32)
-            labels = torch.as_tensor(labels, dtype=torch.int64)
-
-        target = {
-            "boxes": boxes,
-            "labels": labels,
-            "image_id": torch.tensor([coco_img_id], dtype=torch.int64)
-        }
-        return img, target
-
-# Define collate_fn for the DataLoader
-def collate_fn(batch):
-    return tuple(zip(*batch))
-
-# Evaluation function
-def evaluate_coco(model, data_loader, device, dataset_dir):
-    model.eval()
-    coco_gt = data_loader.dataset.coco
-    results = []
-    with torch.no_grad():
-        for images, targets in data_loader:
-            images = [img.to(device) for img in images]
-            outputs = model(images)
-
-            for target, output in zip(targets, outputs):
-                image_id = target["image_id"].item()
-                boxes = output["boxes"].cpu().numpy()
-                scores = output["scores"].cpu().numpy()
-                labels = output["labels"].cpu().numpy()
-
-                for box, score, label in zip(boxes, scores, labels):
-                    x1, y1, x2, y2 = box
-                    results.append({
-                        "image_id": image_id,
-                        "category_id": int(label),
-                        "bbox": [float(x1), float(y1), float(x2 - x1), float(y2 - y1)],
-                        "score": float(score)
-                    })
-
-    pred_file = os.path.join(dataset_dir, "predictions.json")
-    with open(pred_file, "w") as f:
-        json.dump(results, f, indent=2)
-
-    coco_dt = coco_gt.loadRes(pred_file)
-    coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
-
-    ap = coco_eval.stats[0]
-    ap50 = coco_eval.stats[1]
-    return ap, ap50
-
-# Ray remote training loop with annotations
 @ray.remote(num_gpus=1)
 def train_func(config, node_id):
+    # Initialize wandb for each worker
+    wandb.init(
+        project="ray-wandb-object-detection",
+        group="distributed-nodes",
+        name=f"node_{node_id}",
+        config=config
+    )
+
     # Dataset setup
     train_dir = config["train_dir"]
     val_dir = config["val_dir"]
@@ -139,7 +61,7 @@ def train_func(config, node_id):
         train_sampler.set_epoch(epoch)
 
         total_train_loss = 0.0
-        for images, targets in train_loader:
+        for step, (images, targets) in enumerate(train_loader):
             images = [img.to(device) for img in images]
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -169,26 +91,5 @@ def train_func(config, node_id):
         else:
             wandb.log({"epoch": epoch, "train_loss": avg_train_loss})
 
-    wandb.finish()
+    wandb.finish()  # Make sure to call finish at the end of each worker's training
 
-# Main code
-if __name__ == "__main__":
-    ray.init(address="auto")
-
-    config = {
-        "train_dir": "/workspace/datasets/openimages_coco/train",
-        "val_dir": "/workspace/datasets/openimages_coco/val",
-        "num_classes": 4,
-        "num_nodes": 2,
-        "batch_size": 8,
-        "num_epochs": 20,
-        "lr": 0.005,
-        "seed": 42,
-    }
-
-    # Launch training across all nodes using Ray remote function
-    futures = [train_func.remote(config, node_id) for node_id in range(config["num_nodes"])]
-    results = ray.get(futures)
-
-    print("Training completed for all workers.")
-    ray.shutdown()
