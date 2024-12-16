@@ -45,8 +45,10 @@ class CocoDataset(CocoDetection):
         }
         return img, target
 
+
 def collate_fn(batch):
     return tuple(zip(*batch))
+
 
 def evaluate_coco(model, data_loader, device, dataset_dir):
     model.eval()
@@ -189,9 +191,9 @@ if __name__ == "__main__":
         "num_classes": 4,
         "num_nodes": 2,
         "batch_size": 16,
-        "num_epochs": 100,
+        "num_epochs": 10,
+        "num_epochs": 40,
         "lr": 0.005,
-        "seed": 42,
     }
 
     futures = [train_loop_per_worker.remote(node_id, config) for node_id in range(config["num_nodes"])]
