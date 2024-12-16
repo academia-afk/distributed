@@ -91,7 +91,7 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
     wandb.init(
-        project="ray-wandb-object-detection-single-node",
+        project="ray-wandb-object-detection-three-nodes",
         group="distributed-nodes",
         name=f"node_{node_id}",
         config=config
@@ -189,7 +189,7 @@ if __name__ == "__main__":
         "train_dir": "/workspace/datasets/openimages_coco/train",
         "val_dir":   "/workspace/datasets/openimages_coco/val",
         "num_classes": 4,
-        "num_nodes": 1,
+        "num_nodes": 3,
         "batch_size": 8,
         "num_epochs": 10,
         "num_epochs": 40,
