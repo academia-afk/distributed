@@ -180,8 +180,8 @@ if __name__ == "__main__":
         "val_dir": "/workspace/datasets/openimages_coco/val",
         "num_classes": 4,
         "num_nodes": 2,
-        "batch_size": 16,
-        "num_epochs": 100,
+        "batch_size": 8,
+        "num_epochs": 20,
         "lr": 0.005,
         "seed": 42,
     }
