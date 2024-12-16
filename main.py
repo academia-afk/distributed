@@ -2,7 +2,6 @@ import os
 import json
 import torch
 import wandb
-import random
 
 import torchvision
 import torchvision.transforms as T
@@ -12,10 +11,11 @@ from torch.utils.data import DataLoader, DistributedSampler
 from pycocotools.cocoeval import COCOeval
 
 import ray
-from ray import train
-from ray.train import ScalingConfig
-from ray.train.torch import TorchTrainer
 from torchvision.datasets import CocoDetection
+
+
+from torch.nn.parallel import DistributedDataParallel as DDP
+import torch.distributed as dist
 
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
@@ -45,10 +45,8 @@ class CocoDataset(CocoDetection):
         }
         return img, target
 
-
 def collate_fn(batch):
     return tuple(zip(*batch))
-
 
 def evaluate_coco(model, data_loader, device, dataset_dir):
     model.eval()
@@ -88,7 +86,8 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
     ap50 = coco_eval.stats[1]
     return ap, ap50
 
-@ray.remote(num_gpus=1) 
+
+@ray.remote(num_gpus=1)
 def train_loop_per_worker(node_id, config):
     wandb.init(
         project="ray-wandb-object-detection",
@@ -98,16 +97,17 @@ def train_loop_per_worker(node_id, config):
     )
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    train_dir = config["train_dir"]
-    val_dir   = config["val_dir"]
+    dist.init_process_group(backend="nccl", rank=node_id, world_size=config["num_nodes"])
 
+    train_dir = config["train_dir"]
+    val_dir = config["val_dir"]
     train_img_folder = os.path.join(train_dir, "data")
-    train_ann_file   = os.path.join(train_dir, "labels.json")
-    val_img_folder   = os.path.join(val_dir,   "data")
-    val_ann_file     = os.path.join(val_dir,   "labels.json")
+    train_ann_file = os.path.join(train_dir, "labels.json")
+    val_img_folder = os.path.join(val_dir, "data")
+    val_ann_file = os.path.join(val_dir, "labels.json")
 
     train_dataset = CocoDataset(train_img_folder, train_ann_file)
-    val_dataset   = CocoDataset(val_img_folder,   val_ann_file)
+    val_dataset = CocoDataset(val_img_folder, val_ann_file)
 
     train_sampler = DistributedSampler(
         train_dataset,
@@ -134,6 +134,8 @@ def train_loop_per_worker(node_id, config):
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, config["num_classes"])
     model.to(device)
 
+    model = DDP(model, device_ids=[node_id])
+
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=config["lr"],
@@ -147,8 +149,8 @@ def train_loop_per_worker(node_id, config):
 
         total_train_loss = 0.0
         for images, targets in train_loader:
-            images  = [img.to(device) for img in images]
-            targets = [{k: v.to(device) for k,v in t.items()} for t in targets]
+            images = [img.to(device) for img in images]
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
             optimizer.zero_grad()
             loss_dict = model(images, targets)
@@ -162,7 +164,7 @@ def train_loop_per_worker(node_id, config):
 
         if node_id == 0:
             ap, ap50 = evaluate_coco(model, val_loader, device, val_dir)
-            accuracy = ap50 * 100.0  # A naive measure, not standard for detection
+            accuracy = ap50 * 100.0
 
             wandb.log({
                 "epoch": epoch,
@@ -172,13 +174,14 @@ def train_loop_per_worker(node_id, config):
                 "accuracy": accuracy,
             })
             print(
-                f"[Rank {node_id}] Epoch [{epoch+1}/{config['num_epochs']}]: "
+                f"[Rank {node_id}] Epoch [{epoch + 1}/{config['num_epochs']}]: "
                 f"Train Loss={avg_train_loss:.4f}, AP={ap:.4f}, AP50={ap50:.4f}"
             )
         else:
             wandb.log({"epoch": epoch, "train_loss": avg_train_loss})
 
     wandb.finish()
+    dist.barrier(f"Node {node_id} finished training.")
     return f"Node {node_id} finished training."
 
 
@@ -187,7 +190,7 @@ if __name__ == "__main__":
 
     config = {
         "train_dir": "/workspace/datasets/openimages_coco/train",
-        "val_dir":   "/workspace/datasets/openimages_coco/val",
+        "val_dir": "/workspace/datasets/openimages_coco/val",
         "num_classes": 4,
         "num_nodes": 2,
         "batch_size": 16,
