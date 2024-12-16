@@ -1,18 +1,22 @@
 import os
+import json
 import torch
 import wandb
-import ray
-import json
-from ray import train
-from ray.train import ScalingConfig
-from ray.train.torch import TorchTrainer
+import random
+
 import torchvision
 import torchvision.transforms as T
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torch.utils.data import DataLoader, DistributedSampler
+
+from pycocotools.cocoeval import COCOeval
+
+import ray
+from ray import train
+from ray.train import ScalingConfig
+from ray.train.torch import TorchTrainer
 from torchvision.datasets import CocoDetection
 
-# Define the dataset class
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
         img, anns = super().__getitem__(idx)
@@ -41,11 +45,9 @@ class CocoDataset(CocoDetection):
         }
         return img, target
 
-# Define collate_fn for the DataLoader
 def collate_fn(batch):
     return tuple(zip(*batch))
 
-# Evaluation function
 def evaluate_coco(model, data_loader, device, dataset_dir):
     model.eval()
     coco_gt = data_loader.dataset.coco
@@ -84,28 +86,27 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
     ap50 = coco_eval.stats[1]
     return ap, ap50
 
-# Ray remote training loop with annotations
-@ray.remote(num_gpus=1)
-def train_func(config, node_id):
-    # Dataset setup
+@ray.remote(num_gpus=1) 
+def train_loop_per_worker(node_id, config):
     wandb.init(
         project="ray-wandb-object-detection",
         group="distributed-nodes",
         name=f"node_{node_id}",
         config=config
     )
-    
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     train_dir = config["train_dir"]
-    val_dir = config["val_dir"]
+    val_dir   = config["val_dir"]
+
     train_img_folder = os.path.join(train_dir, "data")
-    train_ann_file = os.path.join(train_dir, "labels.json")
-    val_img_folder = os.path.join(val_dir, "data")
-    val_ann_file = os.path.join(val_dir, "labels.json")
+    train_ann_file   = os.path.join(train_dir, "labels.json")
+    val_img_folder   = os.path.join(val_dir,   "data")
+    val_ann_file     = os.path.join(val_dir,   "labels.json")
 
     train_dataset = CocoDataset(train_img_folder, train_ann_file)
-    val_dataset = CocoDataset(val_img_folder, val_ann_file)
+    val_dataset   = CocoDataset(val_img_folder,   val_ann_file)
 
-    # DataLoader setup
     train_sampler = DistributedSampler(
         train_dataset,
         shuffle=True,
@@ -126,14 +127,11 @@ def train_func(config, node_id):
         collate_fn=collate_fn
     )
 
-    # Model setup
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights="DEFAULT")
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, config["num_classes"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    # Optimizer setup
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=config["lr"],
@@ -141,15 +139,14 @@ def train_func(config, node_id):
         weight_decay=0.0005,
     )
 
-    # Training loop
     for epoch in range(config["num_epochs"]):
         model.train()
         train_sampler.set_epoch(epoch)
 
         total_train_loss = 0.0
         for images, targets in train_loader:
-            images = [img.to(device) for img in images]
-            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
+            images  = [img.to(device) for img in images]
+            targets = [{k: v.to(device) for k,v in t.items()} for t in targets]
 
             optimizer.zero_grad()
             loss_dict = model(images, targets)
@@ -163,7 +160,7 @@ def train_func(config, node_id):
 
         if node_id == 0:
             ap, ap50 = evaluate_coco(model, val_loader, device, val_dir)
-            accuracy = ap50 * 100.0
+            accuracy = ap50 * 100.0  # A naive measure, not standard for detection
 
             wandb.log({
                 "epoch": epoch,
@@ -172,31 +169,32 @@ def train_func(config, node_id):
                 "ap50": ap50,
                 "accuracy": accuracy,
             })
-            print(f"Epoch [{epoch + 1}/{config['num_epochs']}]: "
-                  f"Train Loss={avg_train_loss:.4f}, AP={ap:.4f}, AP50={ap50:.4f}")
+            print(
+                f"[Rank {node_id}] Epoch [{epoch+1}/{config['num_epochs']}]: "
+                f"Train Loss={avg_train_loss:.4f}, AP={ap:.4f}, AP50={ap50:.4f}"
+            )
         else:
             wandb.log({"epoch": epoch, "train_loss": avg_train_loss})
 
     wandb.finish()
+    return f"Node {node_id} finished training."
 
-# Main code
+
 if __name__ == "__main__":
     ray.init(address="auto")
 
     config = {
         "train_dir": "/workspace/datasets/openimages_coco/train",
-        "val_dir": "/workspace/datasets/openimages_coco/val",
+        "val_dir":   "/workspace/datasets/openimages_coco/val",
         "num_classes": 4,
         "num_nodes": 2,
-        "batch_size": 8,
-        "num_epochs": 20,
+        "batch_size": 16,
+        "num_epochs": 100,
         "lr": 0.005,
         "seed": 42,
     }
 
-    # Launch training across all nodes using Ray remote function
-    futures = [train_func.remote(config, node_id) for node_id in range(config["num_nodes"])]
+    futures = [train_loop_per_worker.remote(node_id, config) for node_id in range(config["num_nodes"])]
     results = ray.get(futures)
-
-    print("Training completed for all workers.")
+    print(results)
     ray.shutdown()
