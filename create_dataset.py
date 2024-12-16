@@ -3,8 +3,8 @@ import fiftyone.zoo as foz
 import os
 
 classes = ["Cat", "Dog", "Person"]
-max_samples_train = 800
-max_samples_val = 200
+max_samples_train = 8
+max_samples_val = 2
 
 export_dir = "datasets/openimages_coco"
 
