@@ -1,21 +1,16 @@
 import os
-import json
 import torch
 import wandb
-
+import ray
+from ray import train
+from ray.train import ScalingConfig
+from ray.train.torch import TorchTrainer
 import torchvision
 import torchvision.transforms as T
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 from torch.utils.data import DataLoader, DistributedSampler
-
-from pycocotools.cocoeval import COCOeval
-
-import ray
 from torchvision.datasets import CocoDetection
 
-
-from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed as dist
 
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
@@ -45,8 +40,10 @@ class CocoDataset(CocoDetection):
         }
         return img, target
 
+
 def collate_fn(batch):
     return tuple(zip(*batch))
+
 
 def evaluate_coco(model, data_loader, device, dataset_dir):
     model.eval()
@@ -87,18 +84,8 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
     return ap, ap50
 
 
-@ray.remote(num_gpus=1)
-def train_loop_per_worker(node_id, config):
-    wandb.init(
-        project="ray-wandb-object-detection",
-        group="distributed-nodes",
-        name=f"node_{node_id}",
-        config=config
-    )
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    dist.init_process_group(backend="nccl", rank=node_id, world_size=config["num_nodes"])
-
+def train_func(config):
+    # Dataset setup
     train_dir = config["train_dir"]
     val_dir = config["val_dir"]
     train_img_folder = os.path.join(train_dir, "data")
@@ -109,11 +96,12 @@ def train_loop_per_worker(node_id, config):
     train_dataset = CocoDataset(train_img_folder, train_ann_file)
     val_dataset = CocoDataset(val_img_folder, val_ann_file)
 
+    # DataLoader setup
     train_sampler = DistributedSampler(
         train_dataset,
         shuffle=True,
         num_replicas=config["num_nodes"],
-        rank=node_id
+        rank=train.get_context().get_world_rank()
     )
 
     train_loader = DataLoader(
@@ -129,13 +117,14 @@ def train_loop_per_worker(node_id, config):
         collate_fn=collate_fn
     )
 
+    # Model setup
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights="DEFAULT")
     in_features = model.roi_heads.box_predictor.cls_score.in_features
     model.roi_heads.box_predictor = FastRCNNPredictor(in_features, config["num_classes"])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
-    model = DDP(model, device_ids=[node_id])
-
+    # Optimizer setup
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=config["lr"],
@@ -143,6 +132,7 @@ def train_loop_per_worker(node_id, config):
         weight_decay=0.0005,
     )
 
+    # Training loop
     for epoch in range(config["num_epochs"]):
         model.train()
         train_sampler.set_epoch(epoch)
@@ -162,7 +152,7 @@ def train_loop_per_worker(node_id, config):
 
         avg_train_loss = total_train_loss / len(train_loader)
 
-        if node_id == 0:
+        if train.get_context().get_world_rank() == 0:
             ap, ap50 = evaluate_coco(model, val_loader, device, val_dir)
             accuracy = ap50 * 100.0
 
@@ -173,16 +163,13 @@ def train_loop_per_worker(node_id, config):
                 "ap50": ap50,
                 "accuracy": accuracy,
             })
-            print(
-                f"[Rank {node_id}] Epoch [{epoch + 1}/{config['num_epochs']}]: "
-                f"Train Loss={avg_train_loss:.4f}, AP={ap:.4f}, AP50={ap50:.4f}"
-            )
+            print(f"Epoch [{epoch + 1}/{config['num_epochs']}]: "
+                  f"Train Loss={avg_train_loss:.4f}, AP={ap:.4f}, AP50={ap50:.4f}")
+
         else:
             wandb.log({"epoch": epoch, "train_loss": avg_train_loss})
 
     wandb.finish()
-    dist.barrier(f"Node {node_id} finished training.")
-    return f"Node {node_id} finished training."
 
 
 if __name__ == "__main__":
@@ -199,7 +186,15 @@ if __name__ == "__main__":
         "seed": 42,
     }
 
-    futures = [train_loop_per_worker.remote(node_id, config) for node_id in range(config["num_nodes"])]
-    results = ray.get(futures)
-    print(results)
+    trainer = TorchTrainer(
+        train_func,
+        scaling_config=ScalingConfig(
+            num_workers=config["num_nodes"],
+            use_gpu=True,
+            resources_per_worker={"CPU": 1, "GPU": 1}
+        ),
+        config=config
+    )
+
+    trainer.fit()
     ray.shutdown()
