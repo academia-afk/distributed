@@ -203,6 +203,8 @@ def train_loop_per_worker(node_id, config, ps):
             wandb.log({"epoch": epoch, "train_loss": avg_train_loss})
 
     wandb.finish()
+    num_nodes = config["num_nodes"]
+    torch.save(model.state_dict(), f"async_model_{num_nodes}_nodes.pth")
     return f"Node {node_id} finished training."
 
 
