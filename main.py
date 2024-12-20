@@ -91,8 +91,8 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
     wandb.init(
-        project="thesis",
-        group="sync_updates",
+        project="sync_updates",
+        group="single_node",
         name=f"node_{node_id}",
         config=config
     )
