@@ -25,9 +25,8 @@ from ray.tune import register_env
 
 
 class MyEnvClass(gym.Env):
-    def __init__(self, config):
-        worker_idx = config.worker_index  # <- but you can also use the worker index
-        self.seed(40 + worker_idx)
+    def __init__(self, node_id):
+        self.seed(40 + node_id)
 
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
@@ -102,6 +101,9 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
+    
+    register_env("my_seeded_env", lambda config: MyEnvClass(node_id))
+    
     def set_seed(seed):
         random.seed(seed)
         np.random.seed(seed)
@@ -210,7 +212,6 @@ def train_loop_per_worker(node_id, config):
 
 if __name__ == "__main__":
     ray.init(address="auto")
-    register_env("my_seeded_env", lambda config: MyEnvClass(config))
     
     config = {
         "train_dir": "/workspace/datasets/openimages_coco/train",
