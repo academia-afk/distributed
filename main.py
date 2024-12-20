@@ -206,6 +206,7 @@ if __name__ == "__main__":
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
+        "seed": 42,
     }
 
     futures = [train_loop_per_worker.remote(node_id, config) for node_id in range(config["num_nodes"])]
