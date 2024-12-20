@@ -15,7 +15,7 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-set_seed(42)  # You can choose any seed value you prefer
+  # You can choose any seed value you prefer
 
 import torchvision
 import torchvision.transforms as T
@@ -112,8 +112,9 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
+    set_seed(42)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
+    
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
 
