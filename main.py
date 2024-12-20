@@ -103,14 +103,14 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
     def set_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-    # For CUDA deterministic behavior
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
+  # You can choose any seed value you prefer
 
   # You can choose any seed value you prefer
     set_seed(42)
