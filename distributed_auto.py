@@ -3,6 +3,7 @@ import json
 import torch
 import wandb
 import random
+from PIL import Image
 
 import torchvision
 import torchvision.transforms as T
@@ -15,8 +16,8 @@ import ray
 from ray import train
 from ray.train import ScalingConfig
 from ray.train.torch import TorchTrainer
-from torchvision.datasets import CocoDetection
 import ray.data
+from torchvision.datasets import CocoDetection
 
 # Modify your dataset class to be compatible with Ray Data
 class CocoDataset(CocoDetection):
@@ -101,17 +102,22 @@ def train_loop_per_worker(node_id, config):
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
 
+    # Image and annotation directories
     train_img_folder = os.path.join(train_dir, "data")
     train_ann_file   = os.path.join(train_dir, "labels.json")
     val_img_folder   = os.path.join(val_dir,   "data")
     val_ann_file     = os.path.join(val_dir,   "labels.json")
 
-    # Load the dataset using Ray Data API
-    train_dataset = ray.data.read_parquet(train_img_folder)  # Assuming Parquet format for Ray
-    val_dataset = ray.data.read_parquet(val_img_folder)
+    # Ray Data: Read image paths
+    train_image_paths = [os.path.join(train_img_folder, f) for f in os.listdir(train_img_folder)]
+    val_image_paths = [os.path.join(val_img_folder, f) for f in os.listdir(val_img_folder)]
 
-    # Shuffle and batch the dataset for distributed training
-    train_dataset = train_dataset.shuffle().batch(config["batch_size"])
+    # Create Ray Datasets from image paths
+    train_dataset = ray.data.from_items(train_image_paths)
+    val_dataset = ray.data.from_items(val_image_paths)
+
+    # You can also batch and distribute data if necessary:
+    train_dataset = train_dataset.batch(config["batch_size"]).shuffle()
     val_dataset = val_dataset.batch(config["batch_size"])
 
     model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights="DEFAULT")
@@ -130,7 +136,19 @@ def train_loop_per_worker(node_id, config):
         model.train()
         
         total_train_loss = 0.0
-        for images, targets in train_dataset:
+        for batch in train_dataset.iter_rows():
+            # Load image and annotations in the batch
+            images, targets = [], []
+            for image_path in batch:
+                img = Image.open(image_path)
+                img = T.ToTensor()(img)
+                # You need to load annotations (in your case from JSON) as well
+                # Assuming a method `load_annotation` to load the target annotations from JSON
+                annotation = load_annotation(image_path)  # Implement this function as needed
+                images.append(img)
+                targets.append(annotation)
+
+            # Move data to GPU
             images = [img.to(device) for img in images]
             targets = [{k: v.to(device) for k,v in t.items()} for t in targets]
 
@@ -171,8 +189,8 @@ if __name__ == "__main__":
     config = {
         "train_dir": "datasets/openimages_coco/train",
         "val_dir":   "datasets/openimages_coco/val",
-        "num_classes": 3,
-        "num_nodes": 1,
+        "num_classes": 4,
+        "num_nodes": 3,
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
