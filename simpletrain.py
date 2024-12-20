@@ -153,8 +153,8 @@ def train_loop(config):
 if __name__ == "__main__":
 
     config = {
-        "train_dir": "/workspace/coco/train",
-        "val_dir":   "/workspace/coco/val",
+        "train_dir": "/workspace/coco/training",
+        "val_dir":   "/workspace/coco/validation",
         "num_classes": 20,
         "batch_size": 8,
         "num_epochs": 10,
