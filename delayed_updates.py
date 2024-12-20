@@ -112,13 +112,6 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 
 @ray.remote(num_gpus=1)
 def train_loop_per_worker(node_id, config, ps):
-    wandb.init(
-        project="async_updates",
-        group="single_node",
-        name=f"node_{node_id}",
-        config=config
-    )
-
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     seed = config["seed"] + node_id  # Different seed for each node
@@ -174,6 +167,13 @@ def train_loop_per_worker(node_id, config, ps):
         lr=config["lr"],
         momentum=0.9,
         weight_decay=0.0005,
+    )
+
+    wandb.init(
+    project="async_updates",
+    group="single_node",
+    name=f"node_{node_id}",
+    config=config
     )
 
     for epoch in range(config["num_epochs"]):
