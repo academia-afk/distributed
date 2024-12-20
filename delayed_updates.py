@@ -14,6 +14,15 @@ from pycocotools.cocoeval import COCOeval
 import ray
 from torchvision.datasets import CocoDetection
 
+import gym
+from ray.tune import register_env
+
+
+class MyEnvClass(gym.Env):
+    def __init__(self, config):
+        worker_idx = config.worker_index  # <- but you can also use the worker index
+        self.seed(40 + worker_idx)
+
 @ray.remote
 class ParameterServer:
     def __init__(self, model_state_dict):
@@ -113,16 +122,6 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 @ray.remote(num_gpus=1)
 def train_loop_per_worker(node_id, config, ps):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    
-    seed = config["seed"] + node_id  # Different seed for each node
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
@@ -137,7 +136,6 @@ def train_loop_per_worker(node_id, config, ps):
 
     train_sampler = DistributedSampler(
         train_dataset,
-        shuffle=True,
         num_replicas=config["num_nodes"],
         rank=node_id
     )
@@ -221,6 +219,7 @@ def train_loop_per_worker(node_id, config, ps):
 
 if __name__ == "__main__":
     ray.init(address="auto")
+    register_env("my_seeded_env", lambda config: MyEnvClass(config))
 
     config = {
         "train_dir": "/workspace/datasets/openimages_coco/train",
@@ -230,7 +229,6 @@ if __name__ == "__main__":
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
-        "seed": 42,
     }
 
     initial_model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights="DEFAULT")
