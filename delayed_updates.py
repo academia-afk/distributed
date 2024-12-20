@@ -113,8 +113,8 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 @ray.remote(num_gpus=1)
 def train_loop_per_worker(node_id, config, ps):
     wandb.init(
-        project="ray-wandb-object-detection-two-nodes-delayeds",
-        group="distributed-nodes",
+        project="thesis",
+        group="delayed_updates",
         name=f"node_{node_id}",
         config=config
     )
