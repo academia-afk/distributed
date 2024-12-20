@@ -98,6 +98,17 @@ def train_loop_per_worker(node_id, config):
     )
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    seed = config["seed"] + node_id  # Different seed for each node
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
 
