@@ -3,6 +3,19 @@ import json
 import torch
 import wandb
 import random
+import numpy as np
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    # For CUDA deterministic behavior
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+set_seed(42)  # You can choose any seed value you prefer
 
 import torchvision
 import torchvision.transforms as T
