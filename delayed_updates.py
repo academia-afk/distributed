@@ -120,6 +120,17 @@ def train_loop_per_worker(node_id, config, ps):
     )
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
+    seed = config["seed"] + node_id  # Different seed for each node
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
 
@@ -219,6 +230,7 @@ if __name__ == "__main__":
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
+        "seed": 42,
     }
 
     initial_model = torchvision.models.detection.fasterrcnn_resnet50_fpn(weights="DEFAULT")
