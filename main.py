@@ -101,8 +101,6 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 def train_loop_per_worker(node_id, config):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    
-
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
 
@@ -116,7 +114,6 @@ def train_loop_per_worker(node_id, config):
 
     train_sampler = DistributedSampler(
         train_dataset,
-        shuffle=True,
         num_replicas=config["num_nodes"],
         rank=node_id
     )
