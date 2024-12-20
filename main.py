@@ -26,12 +26,6 @@ class MyEnvClass(gym.Env):
         worker_idx = config.worker_index  # <- but you can also use the worker index
         self.seed(40 + worker_idx)
 
-
-
-
-
-
-
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
         img, anns = super().__getitem__(idx)
@@ -155,7 +149,7 @@ def train_loop_per_worker(node_id, config):
     wandb.init(
     project="sync_updates",
     group="single_node",
-    name=f"node_{node_id}",
+    name=f"node_{node_id+1}",
     config=config
     )
 
