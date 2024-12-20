@@ -17,6 +17,21 @@ from ray.train import ScalingConfig
 from ray.train.torch import TorchTrainer
 from torchvision.datasets import CocoDetection
 
+import gym
+from ray.tune import register_env
+
+
+class MyEnvClass(gym.Env):
+    def __init__(self, config):
+        worker_idx = config.worker_index  # <- but you can also use the worker index
+        self.seed(40 + worker_idx)
+
+
+
+
+
+
+
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
         img, anns = super().__getitem__(idx)
@@ -92,15 +107,7 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 def train_loop_per_worker(node_id, config):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    seed = config["seed"] + node_id  # Different seed for each node
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    
 
     train_dir = config["train_dir"]
     val_dir   = config["val_dir"]
@@ -197,7 +204,8 @@ def train_loop_per_worker(node_id, config):
 
 if __name__ == "__main__":
     ray.init(address="auto")
-
+    register_env("my_seeded_env", lambda config: MyEnvClass(config))
+    
     config = {
         "train_dir": "/workspace/datasets/openimages_coco/train",
         "val_dir":   "/workspace/datasets/openimages_coco/val",
@@ -206,7 +214,6 @@ if __name__ == "__main__":
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
-        "seed": 42,
     }
 
     futures = [train_loop_per_worker.remote(node_id, config) for node_id in range(config["num_nodes"])]
