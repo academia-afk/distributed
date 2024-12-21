@@ -180,7 +180,7 @@ def train_loop_per_worker(node_id, config, ps):
 
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=config["lr"],
+        lr=config["lr"] * config["num_nodes"],
         momentum=0.9,
         weight_decay=0.0005,
     )
