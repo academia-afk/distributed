@@ -132,7 +132,7 @@ def train_loop_per_worker(node_id, config, ps):
         torch.backends.cudnn.benchmark = False
         register_env("seed_env", lambda config: EnvClass(seed))
 
-    set_seed(40 + node_id)
+    set_seed(40)
 
     train_dir = config["train_dir"]
     val_dir = config["val_dir"]
@@ -187,7 +187,7 @@ def train_loop_per_worker(node_id, config, ps):
 
     wandb.init(
         project="async_distributed",
-        group="five_nodes",
+        group="three_nodes",
         name=f"node_{node_id}",
         config=config
     )
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         "train_dir": "/workspace/dataset/training",
         "val_dir":   "/workspace/dataset/validation",
         "num_classes": 20,
-        "num_nodes": 5,
+        "num_nodes": 3,
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
