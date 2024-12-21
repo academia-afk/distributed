@@ -15,6 +15,9 @@ from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.datasets import CocoDetection
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+
 
 class EnvClass(gym.Env):
     def __init__(self, seed):
@@ -104,9 +107,11 @@ def train_loop_per_worker(node_id, config):
         torch.backends.cudnn.benchmark = False
         register_env("seed_env", lambda config: EnvClass(seed))
 
-    set_seed(40 + node_id)
+    set_seed(40)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+    dist.init_process_group(backend="nccl", rank=node_id, world_size=config["num_nodes"])
 
     train_dir = config["train_dir"]
     val_dir = config["val_dir"]
@@ -156,6 +161,8 @@ def train_loop_per_worker(node_id, config):
         momentum=0.9,
         weight_decay=0.0005,
     )
+
+    model = DDP(model, device_ids=[0])
 
     wandb.init(
         project="sync_distributed",
