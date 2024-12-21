@@ -6,13 +6,11 @@ import gym
 import numpy as np
 import ray
 import torch
-import torch.distributed as dist
 import torchvision
 import torchvision.transforms as T
 import wandb
 from pycocotools.cocoeval import COCOeval
 from ray.tune import register_env
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.datasets import CocoDetection
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
@@ -152,9 +150,6 @@ def train_loop_per_worker(node_id, config):
 
     model.to(device)
 
-    dist.init_process_group(backend='nccl', rank=node_id, world_size=config["num_nodes"])
-    model = DDP(model, device_ids=[node_id])
-
     optimizer = torch.optim.SGD(
         model.parameters(),
         lr=config["lr"],
@@ -164,7 +159,7 @@ def train_loop_per_worker(node_id, config):
 
     wandb.init(
         project="sync_distributed",
-        group="three_nodes",
+        group="five_nodes",
         name=f"node_{node_id}",
         config=config
     )
@@ -219,7 +214,7 @@ if __name__ == "__main__":
         "train_dir": "/workspace/dataset/training",
         "val_dir":   "/workspace/dataset/validation",
         "num_classes": 20,
-        "num_nodes": 3,
+        "num_nodes": 5,
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
