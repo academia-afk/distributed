@@ -221,7 +221,7 @@ if __name__ == "__main__":
         "train_dir": "/workspace/dataset/training",
         "val_dir":   "/workspace/dataset/validation",
         "num_classes": 20,
-        "num_nodes": 5,
+        "num_nodes": 3,
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
