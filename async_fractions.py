@@ -240,8 +240,8 @@ if __name__ == "__main__":
     register_env("my_seeded_env", lambda config: EnvClass(config))
 
     config = {
-        "train_dir": "/workspace/dataset/training",
-        "val_dir":   "/workspace/dataset/validation",
+        "train_dir": "/workspace/datasets/openimages_coco/train",
+        "val_dir":   "/workspace/datasets/openimages_coco/val",
         "num_classes": 20,
         "num_nodes": 2,
         "batch_size": 8,
