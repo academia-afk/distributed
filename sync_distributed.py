@@ -158,7 +158,7 @@ def train_loop_per_worker(node_id, config):
 
     wandb.init(
         project="sync_distributed",
-        group="five_nodes",
+        group="three_nodes",
         name=f"node_{node_id}",
         config=config
     )
