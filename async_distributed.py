@@ -15,8 +15,6 @@ from torch.utils.data import DataLoader, DistributedSampler
 from torchvision.datasets import CocoDetection
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 
 class EnvClass(gym.Env):
     def __init__(self, seed):
@@ -179,10 +177,6 @@ def train_loop_per_worker(node_id, config, ps):
         param.requires_grad = False
 
     model.to(device)
-    
-    dist.init_process_group(backend='nccl', rank=node_id, world_size=config["num_nodes"])
-    model = DDP(model, device_ids=[node_id])
-
 
     optimizer = torch.optim.SGD(
         model.parameters(),
@@ -193,7 +187,7 @@ def train_loop_per_worker(node_id, config, ps):
 
     wandb.init(
         project="async_distributed",
-        group="three_nodes",
+        group="five_nodes",
         name=f"node_{node_id}",
         config=config
     )
@@ -249,7 +243,7 @@ if __name__ == "__main__":
         "train_dir": "/workspace/dataset/training",
         "val_dir":   "/workspace/dataset/validation",
         "num_classes": 20,
-        "num_nodes": 3,
+        "num_nodes": 5,
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
