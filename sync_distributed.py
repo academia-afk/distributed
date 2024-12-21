@@ -159,7 +159,7 @@ def train_loop_per_worker(node_id, config):
 
     wandb.init(
         project="sync_distributed",
-        group="three_nodes",
+        group="five_nodes",
         name=f"node_{node_id}",
         config=config
     )
@@ -214,7 +214,7 @@ if __name__ == "__main__":
         "train_dir": "/workspace/dataset/training",
         "val_dir":   "/workspace/dataset/validation",
         "num_classes": 20,
-        "num_nodes": 3,
+        "num_nodes": 5,
         "batch_size": 8,
         "num_epochs": 10,
         "lr": 0.005,
