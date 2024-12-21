@@ -25,8 +25,8 @@ from ray.tune import register_env
 
 
 class MyEnvClass(gym.Env):
-    def __init__(self, node_id):
-        self.seed(40 + node_id)
+    def __init__(self, seed):
+        self.seed(seed)
 
 class CocoDataset(CocoDetection):
     def __getitem__(self, idx):
@@ -102,8 +102,6 @@ def evaluate_coco(model, data_loader, device, dataset_dir):
 @ray.remote(num_gpus=1) 
 def train_loop_per_worker(node_id, config):
     
-    register_env("my_seeded_env", lambda config: MyEnvClass(node_id))
-    
     def set_seed(seed):
         random.seed(seed)
         np.random.seed(seed)
@@ -111,11 +109,10 @@ def train_loop_per_worker(node_id, config):
         torch.cuda.manual_seed_all(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+        register_env("seed_env", lambda config: MyEnvClass(seed))
 
-  # You can choose any seed value you prefer
-
-  # You can choose any seed value you prefer
-    set_seed(42)
+    set_seed(40+node_id)
+    
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     train_dir = config["train_dir"]
